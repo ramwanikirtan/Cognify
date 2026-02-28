@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useClassroomStore } from '../store/classroomStore'
 import { PERSONAS } from '../data/personas'
+import { generateEvaluation } from '../services/openaiService'
+import { analyzeConversationSentiment, getConversationInsights } from '../services/analyticsService'
 
 // Animated score bar component
 function ScoreBar({ label, score, color, delay = 0 }) {
@@ -104,13 +106,45 @@ const PERSONALITY_EMOJI = {
 }
 
 export default function EvaluationScreen({ onRestart }) {
-    const { evaluationData, topic, subject, conversationLog, resetStore } = useClassroomStore()
+    const { evaluationData, topic, subject, conversationLog, setEvaluationData, resetStore } = useClassroomStore()
     const [showTranscript, setShowTranscript] = useState(false)
     const [visible, setVisible] = useState(false)
+    const [isGenerating, setIsGenerating] = useState(false)
+    const hasStartedGeneration = useRef(false)
 
     useEffect(() => {
         setTimeout(() => setVisible(true), 300)
     }, [])
+
+    useEffect(() => {
+        const generate = async () => {
+            if (evaluationData || hasStartedGeneration.current) return
+            if (conversationLog.length === 0) return
+
+            hasStartedGeneration.current = true
+            setIsGenerating(true)
+
+            try {
+                const [evalData, sentimentData, insightsData] = await Promise.all([
+                    generateEvaluation(topic, subject?.name || 'General', conversationLog, PERSONAS),
+                    analyzeConversationSentiment(conversationLog).catch(() => ({})),
+                    getConversationInsights(conversationLog).catch(() => ([]))
+                ]);
+
+                setEvaluationData({
+                    ...evalData,
+                    sentimentAnalysis: sentimentData,
+                    insights: insightsData
+                });
+            } catch (err) {
+                console.error("Evaluation generation error", err)
+            } finally {
+                setIsGenerating(false)
+            }
+        }
+
+        generate()
+    }, [evaluationData, conversationLog, topic, subject])
 
     const handleRestart = () => {
         resetStore()
@@ -126,21 +160,54 @@ export default function EvaluationScreen({ onRestart }) {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: '20px'
+                gap: '24px',
+                padding: '20px',
+                textAlign: 'center'
             }}>
-                <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-                    style={{
-                        width: '60px', height: '60px',
-                        border: '4px solid rgba(99,102,241,0.2)',
-                        borderTop: '4px solid #6366f1',
-                        borderRadius: '50%'
-                    }}
-                />
-                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '16px' }}>
-                    Generating class report...
-                </p>
+                {conversationLog.length === 0 ? (
+                    <>
+                        <div style={{ fontSize: '48px' }}>🎓</div>
+                        <h2 style={{ color: 'white', margin: 0 }}>No class session recorded</h2>
+                        <p style={{ color: 'rgba(255,255,255,0.4)', maxWidth: '400px' }}>
+                            The class ended before any teaching or conversation began. Please start a new session to see an evaluation.
+                        </p>
+                        <button
+                            onClick={handleRestart}
+                            style={{
+                                padding: '12px 32px',
+                                background: '#6366f1',
+                                border: 'none',
+                                borderRadius: '999px',
+                                color: 'white',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Return to Landing
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+                            style={{
+                                width: '60px', height: '60px',
+                                border: '4px solid rgba(99,102,241,0.2)',
+                                borderTop: '4px solid #6366f1',
+                                borderRadius: '50%'
+                            }}
+                        />
+                        <div style={{ textAlign: 'center' }}>
+                            <p style={{ color: 'white', fontSize: '18px', fontWeight: '600', margin: '0 0 8px' }}>
+                                Analyzing Session Data
+                            </p>
+                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '14px' }}>
+                                Mr. Nova is grading your performance...
+                            </p>
+                        </div>
+                    </>
+                )}
             </div>
         )
     }

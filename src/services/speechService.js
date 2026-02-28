@@ -43,6 +43,8 @@ const VOICES = {
     }
 }
 
+let currentAudio = null
+
 async function speakWithElevenLabs(text, speakerId) {
     const config = VOICES[speakerId] || VOICES.teacher
     console.log(`[ElevenLabs] Speaking as ${config.label}:`, text.slice(0, 40))
@@ -78,14 +80,32 @@ async function speakWithElevenLabs(text, speakerId) {
     console.log('[ElevenLabs] Success, audio size:', audioBlob.size, 'bytes for speaker:', speakerId)
     if (audioBlob.size === 0) throw new Error('Empty audio blob')
 
+    if (currentAudio) {
+        currentAudio.pause()
+        currentAudio.src = ''
+    }
+
     const audioUrl = URL.createObjectURL(audioBlob)
     const audio = new Audio(audioUrl)
+    currentAudio = audio
     audio.playbackRate = config.speed || 1.0
 
     return new Promise((resolve) => {
-        audio.onended = () => { URL.revokeObjectURL(audioUrl); resolve() }
-        audio.onerror = () => { URL.revokeObjectURL(audioUrl); resolve() }
-        audio.play().catch(() => { URL.revokeObjectURL(audioUrl); resolve() })
+        audio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            if (currentAudio === audio) currentAudio = null;
+            resolve()
+        }
+        audio.onerror = () => {
+            URL.revokeObjectURL(audioUrl);
+            if (currentAudio === audio) currentAudio = null;
+            resolve()
+        }
+        audio.play().catch(() => {
+            URL.revokeObjectURL(audioUrl);
+            if (currentAudio === audio) currentAudio = null;
+            resolve()
+        })
         setTimeout(() => resolve(), 60000)
     })
 }
@@ -172,10 +192,24 @@ export async function speakText(text, speakerId = 'teacher') {
 
 export function stopSpeaking() {
     try {
-        document.querySelectorAll('audio').forEach(a => { a.pause(); a.src = '' })
+        if (currentAudio) {
+            console.log('[TTS] Stopping current audio object')
+            currentAudio.pause()
+            currentAudio.src = ''
+            currentAudio = null
+        }
+        document.querySelectorAll('audio').forEach(a => {
+            a.pause()
+            a.src = ''
+        })
         if (typeof window.responsiveVoice !== 'undefined') window.responsiveVoice.cancel()
-        if (window.speechSynthesis) window.speechSynthesis.cancel()
-    } catch (e) { }
+        if (window.speechSynthesis) {
+            console.log('[TTS] Cancelling browser speech')
+            window.speechSynthesis.cancel()
+        }
+    } catch (e) {
+        console.warn('[TTS] Error in stopSpeaking:', e)
+    }
 }
 
 export async function fetchAudioBlob(text, speakerId = 'teacher') {
@@ -219,13 +253,38 @@ export function playAudioBlob(blob, speakerId = 'teacher') {
     const config = VOICES[speakerId] || VOICES.teacher
     return new Promise((resolve) => {
         try {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.src = '';
+            }
+
             const audioUrl = URL.createObjectURL(blob)
             const audio = new Audio(audioUrl)
+            currentAudio = audio
             audio.playbackRate = config.speed || 1.0
-            audio.onended = () => { URL.revokeObjectURL(audioUrl); resolve() }
-            audio.onerror = () => { URL.revokeObjectURL(audioUrl); resolve() }
-            audio.play().catch(() => resolve())
-            setTimeout(() => resolve(), 60000)
+
+            audio.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+                if (currentAudio === audio) currentAudio = null;
+                resolve()
+            }
+            audio.onerror = () => {
+                URL.revokeObjectURL(audioUrl);
+                if (currentAudio === audio) currentAudio = null;
+                resolve()
+            }
+            audio.play().catch(() => {
+                if (currentAudio === audio) currentAudio = null;
+                resolve()
+            })
+
+            setTimeout(() => {
+                if (currentAudio === audio) {
+                    currentAudio.pause();
+                    currentAudio = null;
+                    resolve();
+                }
+            }, 60000)
         } catch (e) {
             resolve()
         }

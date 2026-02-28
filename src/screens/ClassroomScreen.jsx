@@ -66,6 +66,7 @@ export default function ClassroomScreen({ onEnd }) {
     const isPlayingRef = useRef(isPlaying);
     const speedRef = useRef(speed);
     const conversationLogRef = useRef(conversationLog);
+    const isEndingRef = useRef(false);
 
     const [showJoinModal, setShowJoinModal] = useState(false)
     const [joinNameInput, setJoinNameInput] = useState('')
@@ -143,19 +144,20 @@ export default function ClassroomScreen({ onEnd }) {
 
         stopSpeaking()
 
-        // Stop the engine from continuing
-        engineStarted.current = true
+        // Signal the engine to skip the rest and proceed to Phase 4 (Evaluation)
+        isEndingRef.current = true
         skipRef.current = true
-        isPlayingRef.current = false
+        isPlayingRef.current = true // Wake up the runner if paused
+        setIsPlaying(true)
 
-        // Clear blackboard
+        // Clear local UI state
         setBlackboardText('')
         setBlackboardConcept('')
         setIsTyping(false)
         setCurrentSpeaker(null)
         setIsSpeaking(false)
 
-        // Navigate to evaluation
+        // Navigate to evaluation screen (where a spinner will show until Phase 4 finishes)
         onEnd()
     }
 
@@ -319,6 +321,12 @@ export default function ClassroomScreen({ onEnd }) {
             console.log('Teaching slides generated:', slides)
 
             for (const slide of slides) {
+                if (isEndingRef.current) break;
+                while (!isPlayingRef.current) {
+                    if (isEndingRef.current) break;
+                    await sleep(300);
+                }
+                if (isEndingRef.current) break;
                 setBlackboardConcept(slide.concept);
                 setBlackboardText('');
                 await new Promise(r => setTimeout(r, 150));
@@ -357,20 +365,26 @@ export default function ClassroomScreen({ onEnd }) {
             }
 
             // PHASE 2: Generate conversation
-            const teachingContent = slides.map(s => s.content).join(' ');
-            const conversation = await generateConversation(
-                topic,
-                subject?.name || 'General',
-                teachingContent,
-                PERSONAS,
-                []
-            );
+            let conversation = [];
+            if (!isEndingRef.current) {
+                const teachingContent = slides.map(s => s.content).join(' ');
+                conversation = await generateConversation(
+                    topic,
+                    subject?.name || 'General',
+                    teachingContent,
+                    PERSONAS,
+                    []
+                );
+            }
 
             // PHASE 3: Play through conversation messages one by one
             for (const turn of conversation) {
+                if (isEndingRef.current) break;
                 while (!isPlayingRef.current) {
+                    if (isEndingRef.current) break; // Added check for isEndingRef
                     await sleep(300);
                 }
+                if (isEndingRef.current) break; // Added check for isEndingRef
 
                 const msg = {
                     id: generateMessageId(),
@@ -385,6 +399,7 @@ export default function ClassroomScreen({ onEnd }) {
                     skipRef.current = false;
                     addMessage(msg);
                     setCurrentSpeaker(null);
+                    if (isEndingRef.current) break;
                     continue;
                 }
 
@@ -428,43 +443,9 @@ export default function ClassroomScreen({ onEnd }) {
                 await sleep(getDelay(300, speedRef.current));
             }
 
-            // PHASE 4: Generate evaluation
+            // FINISHED - Phase 4 generation is now handled by EvaluationScreen
             setCurrentSpeaker(null);
             setClassEnded(true);
-
-            const allMessages = [
-                ...slides.map((s, i) => ({
-                    id: `slide-${i}`,
-                    speakerId: 'teacher',
-                    speakerName: 'Mr. Nova',
-                    text: s.content,
-                    timestamp: '',
-                    type: 'teaching'
-                })),
-                ...conversation.map((t, i) => ({
-                    id: `conv-${i}`,
-                    speakerId: t.speakerId,
-                    speakerName: t.speakerName,
-                    text: t.text,
-                    timestamp: '',
-                    type: t.type
-                }))
-            ];
-
-            const [evalData, sentimentData, insightsData] = await Promise.all([
-                generateEvaluation(topic, subject?.name || 'General', allMessages, PERSONAS),
-                analyzeConversationSentiment(allMessages).catch(() => ({})),
-                getConversationInsights(allMessages).catch(() => ([]))
-            ]);
-
-            setEvaluationData({
-                ...evalData,
-                sentimentAnalysis: sentimentData,
-                insights: insightsData
-            });
-
-            setPhase('evaluation');
-
             await sleep(500);
             if (onEnd) onEnd();
 
