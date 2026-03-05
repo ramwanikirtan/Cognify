@@ -85,9 +85,3 @@ Our classroom is populated by unique personas, each bringing a different energy 
 
 ---
 
-## 📜 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-*Built with ❤️ for the future of interactive education.*
